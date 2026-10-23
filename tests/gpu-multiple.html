@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>HTML-in-Canvas | M2 multiple surfaces</title>
+  <style>
+    :root { color-scheme: dark; font: 15px/1.45 system-ui, sans-serif; background: #101827; color: #e7edf7; }
+    body { margin: 24px; }
+    main { max-width: 1100px; margin: 0 auto; }
+    h1, p { margin-top: 0; }
+    #stage { display: block; width: 100%; height: 700px; background: #1b2a40; }
+    .card {
+      width: 330px; min-height: 210px; padding: 18px; box-sizing: border-box; border: 1px solid #ffffff66;
+      border-radius: 12px; background: #fff; color: #172033; box-shadow: 0 12px 32px #0006;
+    }
+    .card h2 { margin: 0 0 8px; }
+    .card p { margin: 0 0 14px; }
+    .card label, .card input, .card button { display: block; }
+    .card input, .card button { margin-top: 8px; font: inherit; }
+    .card input { width: 100%; box-sizing: border-box; padding: 7px; }
+    .card button { padding: 7px 10px; cursor: pointer; }
+    #status { min-height: 1.5em; }
+    #error { color: #ff9d9d; white-space: pre-wrap; }
+    .card:nth-child(1) { background: #f4ead9; }
+    .card:nth-child(2) { background: #e8f1fc; }
+    .card:nth-child(3) { background: #f6e4eb; }
+    .card:nth-child(4) { background: #e6f3e9; }
+    .card:nth-child(5) { background: #fff3d9; }
+    .card:nth-child(6) { background: #e5edf6; }
+    .card:nth-child(7) { background: #f1e8ff; }
+    .card:nth-child(8) { background: #e1f1ef; }
+    .card:nth-child(9) { background: #f8e5da; }
+    .card:nth-child(10) { background: #dcecff; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>HTML-in-Canvas — M2 multiple surfaces</h1>
+    <p>Dieci card HTML si sovrappongono. Modifica il contenuto o la larghezza della card in primo piano, portane una davanti e rimuovi il nodo in cima.</p>
+    <p id="status" role="status" aria-live="polite">Inizializzazione WebGPU…</p>
+    <p id="error" role="alert"></p>
+    <canvas id="stage" content="drawable" aria-label="Dieci card HTML composte da WebGPU">
+        <article class="card" id="card-01" drawable data-x="46" data-y="34"><h2>Card 01</h2><p>Surface n. 1 · livello 1</p><button type="button">Porta davanti</button></article>
+        <article class="card" id="card-02" drawable data-x="68" data-y="50"><h2>Card 02</h2><p>Surface n. 2 · livello 2</p><button type="button">Porta davanti</button></article>
+        <article class="card" id="card-03" drawable data-x="90" data-y="66"><h2>Card 03</h2><p>Surface n. 3 · livello 3</p><button type="button">Porta davanti</button></article>
+        <article class="card" id="card-04" drawable data-x="112" data-y="82"><h2>Card 04</h2><p>Surface n. 4 · livello 4</p><button type="button">Porta davanti</button></article>
+        <article class="card" id="card-05" drawable data-x="134" data-y="98"><h2>Card 05</h2><p>Surface n. 5 · livello 5</p><button type="button">Porta davanti</button></article>
+        <article class="card" id="card-06" drawable data-x="156" data-y="114"><h2>Card 06</h2><p>Surface n. 6 · livello 6</p><button type="button">Porta davanti</button></article>
+        <article class="card" id="card-07" drawable data-x="178" data-y="130"><h2>Card 07</h2><p>Surface n. 7 · livello 7</p><button type="button">Porta davanti</button></article>
+        <article class="card" id="card-08" drawable data-x="200" data-y="146"><h2>Card 08</h2><p>Surface n. 8 · livello 8</p><button type="button">Porta davanti</button></article>
+        <article class="card" id="card-09" drawable data-x="222" data-y="162"><h2>Card 09</h2><p>Surface n. 9 · livello 9</p><button type="button">Porta davanti</button></article>
+        <article class="card" id="card-10" drawable data-x="244" data-y="178">
+          <h2 id="front-title">Card 10 in primo piano</h2>
+          <p>Input, larghezza, z-order e rimozione restano controlli DOM nativi.</p>
+          <label for="front-input">Contenuto</label>
+          <input id="front-input" value="Aggiorna il contenuto" autocomplete="off">
+          <label for="width-control">Larghezza</label>
+          <input id="width-control" type="range" min="280" max="430" value="330">
+          <button id="raise-front" type="button">Porta davanti</button>
+          <button id="remove-front" type="button">Rimuovi card in cima</button>
+        </article>
+    </canvas>
+  </main>
+  <script type="module">
+    import { createGpu, createQuadPipeline } from '../src/gpu.js';
+    import { createScene } from '../src/scene.js';
+
+    const canvas = document.querySelector('#stage');
+    const status = document.querySelector('#status');
+    const errorOutput = document.querySelector('#error');
+    const state = { ready: false, failed: false, renderCount: 0 };
+    window.m2State = state;
+    window.m2Errors = [];
+    let gpu;
+    let resources;
+    let scene;
+    let ratioX = window.devicePixelRatio;
+    let ratioY = window.devicePixelRatio;
+    let renderQueue = Promise.resolve();
+    let initialSnapshotsSynced = false;
+
+    function updateStatus() {
+      const counts = scene?.getStats() ?? { nodeCount: 0, allocatedSurfaceCount: 0, destroyedSurfaceCount: 0 };
+      let phase = 'pronto';
+      if (!state.ready) phase = 'in inizializzazione';
+      else if (counts.allocatedSurfaceCount < counts.nodeCount) phase = 'in attesa degli snapshot';
+      status.textContent = `M2 ${phase} · card ${counts.nodeCount} · texture attive ${counts.allocatedSurfaceCount} · surface distrutte ${counts.destroyedSurfaceCount} · render ${state.renderCount}.`;
+    }
+
+    function fail(error) {
+      if (state.failed) return;
+      state.failed = true;
+      status.textContent = 'M2 bloccato: errore WebGPU.';
+      errorOutput.textContent = error?.stack || String(error);
+      window.m2Errors.push(errorOutput.textContent);
+      console.error(error);
+    }
+
+    window.addEventListener('error', (event) => window.m2Errors.push(event.message));
+    window.addEventListener('unhandledrejection', (event) => window.m2Errors.push(String(event.reason)));
+
+    function requestRender() {
+      if (!state.ready || state.failed) return;
+      renderQueue = renderQueue.then(async () => {
+        gpu.device.pushErrorScope('validation');
+        scene.render();
+        const validationError = await gpu.device.popErrorScope();
+        if (validationError) throw validationError;
+        state.renderCount += 1;
+        updateStatus();
+      }).catch(fail);
+    }
+
+    function setCanvasSize(entry) {
+      const cssWidth = canvas.clientWidth;
+      const cssHeight = canvas.clientHeight;
+      const deviceBox = entry.devicePixelContentBoxSize?.[0] ?? entry.devicePixelContentBoxSize;
+      const nextWidth = Math.max(1, Math.round(deviceBox?.inlineSize ?? cssWidth * window.devicePixelRatio));
+      const nextHeight = Math.max(1, Math.round(deviceBox?.blockSize ?? cssHeight * window.devicePixelRatio));
+      const nextRatioX = nextWidth / Math.max(1, cssWidth);
+      const nextRatioY = nextHeight / Math.max(1, cssHeight);
+      const backingChanged = canvas.width !== nextWidth || canvas.height !== nextHeight;
+      const ratioChanged = nextRatioX !== ratioX || nextRatioY !== ratioY;
+      ratioX = nextRatioX;
+      ratioY = nextRatioY;
+      if (backingChanged) {
+        canvas.width = nextWidth;
+        canvas.height = nextHeight;
+      }
+      if (state.ready && (backingChanged || ratioChanged)) {
+        scene.resize(ratioX, ratioY);
+        canvas.requestPaint();
+        requestRender();
+      }
+    }
+
+    const resizeObserver = new ResizeObserver(([entry]) => setCanvasSize(entry));
+    try {
+      resizeObserver.observe(canvas, { box: 'device-pixel-content-box' });
+    } catch {
+      resizeObserver.observe(canvas);
+    }
+
+    const mutationObserver = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const removedNode of record.removedNodes) {
+          if (removedNode instanceof Element && removedNode.matches('[drawable]')) scene?.remove(removedNode);
+        }
+        for (const addedNode of record.addedNodes) {
+          if (addedNode instanceof Element && addedNode.matches('[drawable]') && scene) {
+            scene.add(addedNode, { x: Number(addedNode.dataset.x), y: Number(addedNode.dataset.y) });
+          }
+        }
+      }
+      updateStatus();
+      requestRender();
+    });
+    mutationObserver.observe(canvas, { childList: true });
+
+    canvas.addEventListener('paint', (event) => {
+      if (!state.ready || state.failed) return;
+      const changedElements = event.changedElements ?? [];
+      if (!initialSnapshotsSynced) {
+        scene.syncPaint([...document.querySelectorAll('.card')]);
+        initialSnapshotsSynced = true;
+      } else {
+        scene.syncPaint(changedElements);
+      }
+      requestRender();
+    });
+
+    canvas.addEventListener('click', (event) => {
+      const button = event.target.closest('button');
+      const card = event.target.closest('.card');
+      if (card) scene?.raise(card);
+      if (button?.id === 'remove-front') {
+        const topCard = [...document.querySelectorAll('.card')].at(-1);
+        topCard?.remove();
+        canvas.requestPaint();
+        return;
+      }
+      if (button && button.id !== 'raise-front') {
+        const title = card.querySelector('h2');
+        title.textContent = `${card.id} attiva`;
+      }
+      requestRender();
+    });
+
+    document.querySelector('#front-input').addEventListener('input', (event) => {
+      document.querySelector('#front-title').textContent = `Card 10 · ${event.target.value}`;
+    });
+
+    document.querySelector('#width-control').addEventListener('input', (event) => {
+      document.querySelector('#card-10').style.width = `${event.target.value}px`;
+    });
+
+    try {
+      const capabilities = [
+        canvas.getAttribute('content') === 'drawable',
+        typeof canvas.requestPaint === 'function',
+        typeof canvas.updateElementGeometry === 'function',
+        typeof canvas.getElementImageDefaultSize === 'function',
+        typeof canvas.clearElementGeometry === 'function',
+        typeof GPUQueue !== 'undefined' && typeof GPUQueue.prototype.drawElementImageToTexture === 'function'
+      ];
+      if (capabilities.some((available) => !available)) throw new Error('Preflight M2 incompleto: API HTML-in-Canvas assente.');
+
+      gpu = await createGpu(canvas, { onDeviceLost: fail });
+      gpu.device.pushErrorScope('validation');
+      resources = await createQuadPipeline(gpu.device, gpu.format, '../shaders/composite.wgsl');
+      scene = createScene({ canvas, context: gpu.context, device: gpu.device, resources, ratioX, ratioY });
+      for (const card of document.querySelectorAll('.card')) {
+        scene.add(card, { x: Number(card.dataset.x), y: Number(card.dataset.y) });
+      }
+      const validationError = await gpu.device.popErrorScope();
+      if (validationError) throw validationError;
+
+      state.ready = true;
+      canvas.requestPaint();
+      updateStatus();
+    } catch (error) {
+      fail(error);
+    }
+
+    window.addEventListener('pagehide', () => {
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+      scene?.destroy();
+      gpu?.device.destroy();
+    }, { once: true });
+  </script>
+</body>
+</html>
