@@ -3,7 +3,7 @@ param(
   [int]$Port = 8000,
   [ValidateRange(1024, 65535)]
   [int]$DebuggingPort = 9222,
-  [ValidateSet('tests/wicg-smoke.html', 'tests/gpu-single.html')]
+  [ValidateSet('tests/wicg-smoke.html', 'tests/gpu-single.html', 'tests/gpu-multiple.html')]
   [string]$Page = 'tests/wicg-smoke.html'
 )
 
@@ -29,7 +29,7 @@ if (Get-NetTCPConnection -LocalPort $DebuggingPort -State Listen -ErrorAction Si
 
 $python = (& $pythonLauncher.Source -c 'import sys; print(sys.executable)').Trim()
 if ($LASTEXITCODE -ne 0 -or !(Test-Path $python)) {
-  throw 'Non riesco a individuare l’interprete Python del server locale.'
+  throw 'Python interpreter del server locale non individuato.'
 }
 
 $server = $null

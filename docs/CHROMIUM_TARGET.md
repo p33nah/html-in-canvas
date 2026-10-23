@@ -1,8 +1,8 @@
-# Target Chromium M0–M1
+# Target Chromium M0–M2
 
 ## Stato
 
-M0 è superato: preflight e controlli automatici passati su una build Chrome Canary fissata; l'utente ha confermato il controllo manuale di copia e incolla. M1 single surface è implementato e supera il controllo automatizzato sulla stessa build.
+M0 è superato: preflight e controlli automatici passati su una build Chrome Canary fissata; l'utente ha confermato il controllo manuale di copia e incolla. M1 single surface e M2 multiple surfaces sono implementati e verificati sulla stessa build. M2 è stato corretto dopo aver osservato che il primo evento `paint` può avere `changedElements` vuoto.
 
 ## Build registrata
 
@@ -109,6 +109,31 @@ node .\tests\gpu-single-check.mjs
 ```
 
 Il controllo M1 usa CDP e non legge o modifica il clipboard. Il browser resta aperto per la verifica manuale.
+
+## M2 — Multiple surfaces
+
+La pagina `tests/gpu-multiple.html` compone dieci card HTML sovrapposte con WebGPU. `src/scene.js` mantiene un unico ordine back-to-front, usato sia per comporre le quad sia per aggiornare la hit-test geometry nativa. `src/surfaces.js` gestisce la creazione, il resize, l'upload e la distruzione di texture e buffer per ciascuna card. Un `MutationObserver` rimuove dal registro i nodi DOM eliminati e libera la loro geometria e le risorse GPU.
+
+Verifica completata sulla build registrata. La correzione iniziale sincronizza tutte le card al primo `paint` dopo l'inizializzazione WebGPU; gli eventi successivi sincronizzano solo gli elementi elencati in `changedElements`.
+
+| Verifica | Stato attuale |
+|---|---|
+| Dieci superfici visibili, sovrapposte nell'ordine atteso | pass — screenshot `.audit/m2-browser.png`; stato `card 10 · texture attive 10` |
+| Input nativo in primo piano | pass — click e inserimento CDP; `front-input` riceve focus e aggiorna il titolo |
+| Portare davanti una card aggiorna l'ordine hit-test | pass — nell'area sovrapposta il puntamento passa da `card-02` a `card-01` dopo averla portata davanti |
+| Cambiare larghezza ricrea la texture e mantiene l'hit testing | pass — slider nativo porta la card a 415 px; 10 superfici attive e il nuovo punto dell'input restituisce `front-input` |
+| Rimuovere la card in cima libera le risorse | pass — 9 card, 9 superfici attive e 3 superfici distrutte dopo aggiornamento, resize e rimozione |
+| Errori JavaScript e WebGPU | pass — nessun errore pagina; render completati senza errori di validazione |
+
+Il primo run riproducibile lasciava il canvas vuoto: il primo `paint` utile aveva `changedElements` vuoto, perciò nessuna superficie veniva creata. Una modifica del titolo produceva poi `changedElements: ["card-10"]` e allocava una sola superficie. La pagina ora inizializza tutte le card al primo `paint`; il run finale era visibile (`document.visibilityState === "visible"`) con 10 superfici attive e nessun errore. Il report dettagliato è in `.audit/m2-browser-results.json`.
+
+Avvio della pagina M2 dalla root PowerShell:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-wicg-smoke.ps1 -Page tests/gpu-multiple.html
+```
+
+Il contatore risorse della pagina riporta le superfici GPU allocate e distrutte. Non è una misura diretta dell'uso di VRAM.
 
 ## Riferimenti
 
