@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>HTML-in-Canvas | M1 single surface</title>
+  <style>
+    :root { color-scheme: dark; font: 16px/1.5 system-ui, sans-serif; background: #101827; color: #e7edf7; }
+    body { margin: 24px; }
+    main { max-width: 920px; margin: 0 auto; }
+    h1, p { margin-top: 0; }
+    #stage { display: block; width: 800px; height: 480px; max-width: 100%; background: #1b2a40; }
+    #card {
+      width: 320px; padding: 20px; box-sizing: border-box; border: 1px solid #ffffff44;
+      border-radius: 12px; background: #fff; color: #172033; box-shadow: 0 12px 32px #0005;
+    }
+    #card h2 { margin: 0 0 8px; }
+    #card p { margin: 0 0 16px; }
+    #card label, #card input, #card button { display: block; }
+    #card input, #card button { margin-top: 8px; font: inherit; }
+    #card input { width: 100%; box-sizing: border-box; padding: 8px; }
+    #card button { padding: 8px 12px; cursor: pointer; }
+    #status { min-height: 1.5em; }
+    #error { color: #ff9d9d; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>HTML-in-Canvas — M1 single surface</h1>
+    <p>Una card HTML viene acquisita in una texture e composta con WebGPU. Input e pulsante restano nodi DOM nativi.</p>
+    <p id="status" role="status" aria-live="polite">Inizializzazione WebGPU…</p>
+    <p id="error" role="alert"></p>
+    <canvas id="stage" content="drawable" width="800" height="480" aria-label="Card HTML composta da WebGPU">
+      <article id="card" drawable>
+        <h2 id="title">Card HTML nativa</h2>
+        <p>Il browser disegna questo sottoalbero HTML in una texture WebGPU.</p>
+        <label for="name">Nome</label>
+        <input id="name" value="M1 input pronto" autocomplete="off">
+        <button id="action" type="button">Aggiorna titolo</button>
+      </article>
+    </canvas>
+  </main>
+  <script type="module">
+    import { createGpu, createQuadPipeline, createHtmlSurface, uploadHtmlSurface } from '../src/gpu.js';
+
+    const canvas = document.querySelector('#stage');
+    const card = document.querySelector('#card');
+    const status = document.querySelector('#status');
+    const errorOutput = document.querySelector('#error');
+    const x = 64;
+    const y = 48;
+    const state = { ready: false, failed: false, uploadCount: 0, paintCount: 0 };
+    window.m1State = state;
+    let titleUpdateCount = 0;
+    let gpu;
+    let resources;
+    let surface;
+    let ratioX = window.devicePixelRatio;
+    let ratioY = window.devicePixelRatio;
+    let renderQueue = Promise.resolve();
+
+    function fail(error) {
+      if (state.failed) return;
+      state.failed = true;
+      status.textContent = 'M1 bloccato: errore WebGPU.';
+      errorOutput.textContent = error?.stack || String(error);
+      window.m1Errors.push(errorOutput.textContent);
+      console.error(error);
+    }
+
+    window.m1Errors = [];
+    window.addEventListener('error', (event) => window.m1Errors.push(event.message));
+    window.addEventListener('unhandledrejection', (event) => window.m1Errors.push(String(event.reason)));
+
+    function setCanvasSize(entry) {
+      const previousRatioX = ratioX;
+      const previousRatioY = ratioY;
+      const cssWidth = canvas.clientWidth;
+      const cssHeight = canvas.clientHeight;
+      const deviceBox = entry.devicePixelContentBoxSize?.[0] ?? entry.devicePixelContentBoxSize;
+      const nextWidth = Math.max(1, Math.round(deviceBox?.inlineSize ?? cssWidth * window.devicePixelRatio));
+      const nextHeight = Math.max(1, Math.round(deviceBox?.blockSize ?? cssHeight * window.devicePixelRatio));
+      ratioX = nextWidth / Math.max(1, cssWidth);
+      ratioY = nextHeight / Math.max(1, cssHeight);
+      if (canvas.width === nextWidth && canvas.height === nextHeight) return;
+      canvas.width = nextWidth;
+      canvas.height = nextHeight;
+      if (state.ready) {
+        if (ratioX !== previousRatioX || ratioY !== previousRatioY) {
+          replaceSurface();
+          updateCardGeometry();
+        }
+        canvas.requestPaint();
+      }
+    }
+
+    function updateCardGeometry() {
+      canvas.updateElementGeometry(card, {
+        canvasTransform: new DOMMatrix()
+          .translate(x * ratioX, y * ratioY)
+          .scale(ratioX, ratioY),
+        preserveHitTestOrder: true
+      });
+    }
+
+    function replaceSurface() {
+      const previous = surface;
+      surface = createHtmlSurface(
+        gpu.device,
+        canvas,
+        card,
+        resources.sampler,
+        resources.bindGroupLayout,
+        ratioX,
+        ratioY
+      );
+      previous?.texture.destroy();
+      previous?.uniformBuffer.destroy();
+    }
+
+    const resizeObserver = new ResizeObserver(([entry]) => setCanvasSize(entry));
+    try {
+      resizeObserver.observe(canvas, { box: 'device-pixel-content-box' });
+    } catch {
+      resizeObserver.observe(canvas);
+    }
+
+    async function renderFrame() {
+      if (!state.ready || state.failed) return;
+      gpu.device.pushErrorScope('validation');
+      if (surface.contentDirty) {
+        uploadHtmlSurface(gpu.device, surface);
+        state.uploadCount += 1;
+      }
+
+      const uniforms = new Float32Array([
+        x * ratioX, y * ratioY, surface.width, surface.height,
+        canvas.width, canvas.height, 0, 0
+      ]);
+      gpu.device.queue.writeBuffer(surface.uniformBuffer, 0, uniforms);
+      const encoder = gpu.device.createCommandEncoder();
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: gpu.context.getCurrentTexture().createView(),
+          clearValue: { r: 0.105, g: 0.164, b: 0.25, a: 1 },
+          loadOp: 'clear',
+          storeOp: 'store'
+        }]
+      });
+      pass.setPipeline(resources.pipeline);
+      pass.setBindGroup(0, surface.bindGroup);
+      pass.draw(6);
+      pass.end();
+      gpu.device.queue.submit([encoder.finish()]);
+      const validationError = await gpu.device.popErrorScope();
+      if (validationError) throw validationError;
+
+      status.textContent = `M1 pronto · paint ${state.paintCount} · upload HTML ${state.uploadCount} · ${canvas.width}×${canvas.height} px.`;
+    }
+
+    canvas.addEventListener('paint', (event) => {
+      state.paintCount += 1;
+      if (!state.ready || state.failed) return;
+      const changed = event.changedElements ?? [];
+      if (changed.includes(card)) {
+        const nextSize = canvas.getElementImageDefaultSize(card);
+        if (nextSize.width !== surface.sourceSize.width || nextSize.height !== surface.sourceSize.height) {
+          replaceSurface();
+        } else {
+          surface.contentDirty = true;
+        }
+      }
+      renderQueue = renderQueue.then(renderFrame).catch(fail);
+    });
+
+    document.querySelector('#action').addEventListener('click', () => {
+      document.querySelector('#title').textContent = `Titolo aggiornato (${++titleUpdateCount})`;
+    });
+
+    try {
+      const capabilities = [
+        canvas.getAttribute('content') === 'drawable',
+        card.hasAttribute('drawable'),
+        typeof canvas.requestPaint === 'function',
+        typeof canvas.updateElementGeometry === 'function',
+        typeof canvas.getElementImageDefaultSize === 'function',
+        typeof GPUQueue !== 'undefined' && typeof GPUQueue.prototype.drawElementImageToTexture === 'function'
+      ];
+      if (capabilities.some((available) => !available)) throw new Error('Preflight M1 incompleta: API HTML-in-Canvas assente.');
+
+      gpu = await createGpu(canvas, { onDeviceLost: fail });
+      gpu.device.pushErrorScope('validation');
+      resources = await createQuadPipeline(gpu.device, gpu.format, '../shaders/composite.wgsl');
+      surface = createHtmlSurface(
+        gpu.device,
+        canvas,
+        card,
+        resources.sampler,
+        resources.bindGroupLayout,
+        ratioX,
+        ratioY
+      );
+      updateCardGeometry();
+      const validationError = await gpu.device.popErrorScope();
+      if (validationError) throw validationError;
+
+      state.ready = true;
+      canvas.requestPaint();
+    } catch (error) {
+      fail(error);
+    }
+
+    window.addEventListener('pagehide', () => {
+      resizeObserver.disconnect();
+      canvas.clearElementGeometry(card);
+      surface?.texture.destroy();
+      surface?.uniformBuffer.destroy();
+      gpu?.device.destroy();
+    }, { once: true });
+  </script>
+</body>
+</html>

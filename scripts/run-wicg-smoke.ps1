@@ -2,7 +2,9 @@ param(
   [ValidateRange(1024, 65535)]
   [int]$Port = 8000,
   [ValidateRange(1024, 65535)]
-  [int]$DebuggingPort = 9222
+  [int]$DebuggingPort = 9222,
+  [ValidateSet('tests/wicg-smoke.html', 'tests/gpu-single.html')]
+  [string]$Page = 'tests/wicg-smoke.html'
 )
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -36,7 +38,7 @@ try {
     -ArgumentList @('-m', 'http.server', "$Port", '--bind', '127.0.0.1') `
     -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru
 
-  $url = "http://127.0.0.1:$Port/tests/wicg-smoke.html"
+  $url = "http://127.0.0.1:$Port/$Page"
   $ready = $false
   for ($attempt = 0; $attempt -lt 30; $attempt++) {
     try {
