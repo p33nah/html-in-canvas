@@ -1,8 +1,8 @@
-# Target Chromium M0
+# Target Chromium M0–M1
 
 ## Stato
 
-Il preflight M0 e i controlli automatizzati sono passati su una build Chrome Canary fissata. Il test manuale di copia e incolla resta aperto. M1 non parte finché quel controllo non passa.
+M0 è superato: preflight e controlli automatici passati su una build Chrome Canary fissata; l'utente ha confermato il controllo manuale di copia e incolla. M1 single surface è implementato e supera il controllo automatizzato sulla stessa build.
 
 ## Build registrata
 
@@ -22,7 +22,7 @@ Il preflight M0 e i controlli automatizzati sono passati su una build Chrome Can
 | Server | `http://127.0.0.1:8000`, bind locale |
 | Porta DevTools | `127.0.0.1:9222`, attiva solo durante la sessione di prova |
 | Commit o snapshot | Revisione `1725371` dal manifest Chrome for Testing |
-| Adapter WebGPU | Disponibile. M0 non crea un `GPUDevice` e non invoca l'upload WICG |
+| Adapter WebGPU | Intel `gen-9`; M1 crea un `GPUDevice` e invoca l'upload WICG |
 
 Chrome for Testing proviene dal [manifest ufficiale Chrome for Testing](https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json) e dal relativo bucket Google. Su Windows, `chrome.exe` risulta `NotSigned` secondo Authenticode. Versione rilevata: `158.0.8119.0`. SHA-256 dell'eseguibile: `53CE0A34579AC72736F203F05BAEAA352FE62A8B751312299089E18FEF2E9A99`.
 
@@ -55,7 +55,7 @@ La richiesta WebGPU ha restituito un adapter Intel `gen-9`. L'API non crea un de
 |---|---|---|
 | `card-visible` | pass | screenshot `.audit/m0-browser.png` |
 | `card-button-click` | pass | click CDP nel punto disegnato; listener attivato |
-| `input-focus-selection-copy-paste` | not-run | focus, selezione e inserimento test passati; copia e incolla restano manuali |
+| `input-focus-selection-copy-paste` | pass | focus, selezione, modifica automatica; copia e incolla verificati manualmente dall'utente |
 | `title-refresh` | pass | il titolo aggiornato è visibile nello screenshot |
 | `paint-idle` | pass | nessun nuovo paint per quattro controlli consecutivi a intervalli di 250 ms dopo il primo frame |
 | `nested-drawable-exclusion-order` | pass | screenshot mostra la surface annidata disegnata a destra della card; il codice disegna prima `card`, poi `nested-card` |
@@ -80,9 +80,35 @@ Quando la pagina è aperta, esegui il controllo automatico in un secondo termina
 node .\tests\m0-browser-check.mjs
 ```
 
-Esegui il test una volta per ogni nuova finestra. Chiudi Chrome per fermare il server locale. Il test non usa il clipboard di Windows.
+Esegui il test una volta per ogni nuova finestra. Chiudi Chrome per fermare il server locale. Il controllo automatico M0 non usa il clipboard di Windows.
 
-Per completare il controllo manuale, nel campo seleziona tutto con `Ctrl+A` e copia con `Ctrl+C`. Poi sostituisci il contenuto digitando `rimpiazza`. Seleziona tutto con `Ctrl+A`, incolla con `Ctrl+V` e verifica che ricompaia `M0 input check`. Il testo temporaneo diverso rende osservabile che l'incolla ha davvero ripristinato il valore copiato.
+Il controllo manuale di copia e incolla in M0 è stato confermato positivo dall'utente il 23 ottobre 2026.
+
+## M1 — Single surface WebGPU
+
+La pagina `tests/gpu-single.html` acquisisce una card HTML in una texture RGBA8 e la compone in un quad WGSL. Il backing Canvas segue il device pixel ratio; `updateElementGeometry()` applica la stessa scala e traslazione del quad per allineare l'hit testing DOM. Le modifiche al contenuto riattivano l'upload della texture. Al cambio di risoluzione o dimensione della card le risorse vengono ricreate; alla chiusura della pagina texture, buffer e geometria vengono liberati.
+
+Sulla build registrata, DPR `1.25`, backing `1000×600`:
+
+| Verifica | Stato | Evidenza |
+|---|---|---|
+| Pipeline WebGPU e upload HTML iniziale | pass | report `.audit/m1-browser-results.json`, upload iniziale rilevato |
+| Card, trasparenza e composizione visibili | pass | screenshot `.audit/m1-browser.png`, ispezione visuale |
+| Input: focus, selezione, modifica e hit test | pass | CDP punta a `#name`; valore aggiornato e nuovo upload osservato |
+| Pulsante e hit test | pass | CDP punta a `#action`; titolo aggiornato e nuovo upload osservato |
+| Backing coerente col DPR | pass | `1000×600` per area CSS `800×480` |
+| Errori JavaScript/WebGPU e risposte HTTP | pass | nessun errore della pagina, CDP o validation; nessuna risposta HTTP 4xx osservata |
+
+Il report dell'ultimo run registra 9 upload complessivi dopo le interazioni. Il numero include gli aggiornamenti del form durante la modifica del campo e non è una misura prestazionale; lo scheduling degli upload è fuori dallo scope M1 e verrà affrontato più avanti.
+
+Avvio della pagina M1 dalla root PowerShell:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-wicg-smoke.ps1 -Page tests/gpu-single.html
+node .\tests\gpu-single-check.mjs
+```
+
+Il controllo M1 usa CDP e non legge o modifica il clipboard. Il browser resta aperto per la verifica manuale.
 
 ## Riferimenti
 
