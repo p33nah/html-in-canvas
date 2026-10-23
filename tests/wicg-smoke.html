@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>HTML-in-Canvas | Smoke test M0</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font: 16px/1.5 system-ui, sans-serif;
+      background: #101827;
+      color: #e7edf7;
+    }
+
+    body { margin: 24px; }
+    h1, h2, p { margin-top: 0; }
+    main { max-width: 920px; margin: 0 auto; }
+    #stage {
+      display: block;
+      width: 800px;
+      height: 480px;
+      max-width: 100%;
+      border: 1px solid #52627a;
+      background: #1b2a40;
+    }
+    #card {
+      width: 320px;
+      padding: 20px;
+      box-sizing: border-box;
+      border-radius: 12px;
+      background: #fff;
+      color: #172033;
+      box-shadow: 0 12px 32px #0005;
+    }
+    #nested-card {
+      margin-top: 14px;
+      padding: 10px;
+      border: 2px solid #4b68a5;
+      border-radius: 8px;
+      background: #e8efff;
+    }
+    label, input, button { display: block; }
+    input, button { margin-top: 8px; font: inherit; }
+    input { box-sizing: border-box; width: 100%; padding: 8px; }
+    button { padding: 8px 12px; cursor: pointer; }
+    #report {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      margin-top: 20px;
+    }
+    section { padding: 16px; border: 1px solid #394a64; border-radius: 8px; }
+    ul { margin: 0; padding-left: 20px; }
+    li + li { margin-top: 8px; }
+    code { overflow-wrap: anywhere; }
+    .available { color: #8be0ae; }
+    .unavailable, .failed { color: #ff9d9d; }
+    .not-run { color: #d7c987; }
+    #runtime-status { min-height: 1.5em; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>HTML-in-Canvas smoke test M0</h1>
+    <p>La pagina rileva la presenza delle API e mostra i risultati. L’interazione del form e i casi manuali restano da verificare sulla build Chromium target.</p>
+    <p id="runtime-status" role="status" aria-live="polite">Preflight in corso.</p>
+
+    <canvas id="stage" content="drawable" width="800" height="480" aria-label="Canvas con card HTML">
+      <article id="card" drawable>
+        <h2 id="title">Card HTML nativa</h2>
+        <p>Controlla visibilità, click e comportamento del form nel browser target.</p>
+        <label for="name">Nome</label>
+        <input id="name" value="Alice" autocomplete="off">
+        <button id="action" type="button">Aggiorna titolo</button>
+        <article id="nested-card" drawable>
+          <strong>Drawable annidato</strong>
+          <p>Controllare manualmente esclusione dallo snapshot padre e ordine di paint.</p>
+        </article>
+      </article>
+    </canvas>
+
+    <div id="report">
+      <section aria-labelledby="capability-heading">
+        <h2 id="capability-heading">Presenza API</h2>
+        <ul id="capabilities"></ul>
+      </section>
+      <section aria-labelledby="scenario-heading">
+        <h2 id="scenario-heading">Scenari manuali</h2>
+        <ul id="scenarios"></ul>
+      </section>
+    </div>
+  </main>
+
+  <script type="module">
+    const canvas = document.querySelector('#stage');
+    const card = document.querySelector('#card');
+    const nestedCard = document.querySelector('#nested-card');
+    const title = document.querySelector('#title');
+    const action = document.querySelector('#action');
+    const context = canvas.getContext('2d');
+    const runtimeStatus = document.querySelector('#runtime-status');
+
+    const capabilityResults = [];
+    const scenarioResults = [
+      { id: 'card-visible', status: 'not-run', evidence: 'Non ancora verificato sulla build target.' },
+      { id: 'card-button-click', status: 'not-run', evidence: 'Non ancora verificato sulla build target.' },
+      { id: 'input-focus-selection-copy-paste', status: 'not-run', evidence: 'Verificare focus, selezione, copia e incolla manualmente.' },
+      { id: 'title-refresh', status: 'not-run', evidence: 'Premere il pulsante e verificare il titolo aggiornato.' },
+      { id: 'paint-idle', status: 'not-run', evidence: 'Dopo il paint iniziale, osservare che non parta un ciclo continuo.' },
+      { id: 'nested-drawable-exclusion-order', status: 'not-run', evidence: 'Verificare esclusione dallo snapshot del padre e ordine di paint.' },
+      { id: 'browser-errors', status: 'not-run', evidence: 'Controllare console e pannello Issues di DevTools durante le prove.' },
+      { id: 'devtools-api-presence', status: 'not-run', evidence: 'Confrontare la preflight visibile con le API presenti in DevTools.' }
+    ];
+
+    function addCapability(id, available, detail) {
+      capabilityResults.push({ id, available, detail });
+    }
+
+    function renderReport() {
+      document.querySelector('#capabilities').replaceChildren(...capabilityResults.map((result) => {
+        const item = document.createElement('li');
+        const id = document.createElement('code');
+        item.className = result.available ? 'available' : 'unavailable';
+        id.textContent = result.id;
+        item.append(id, document.createTextNode(`: ${result.available ? 'presente' : 'assente'}. ${result.detail}`));
+        return item;
+      }));
+
+      document.querySelector('#scenarios').replaceChildren(...scenarioResults.map((result) => {
+        const item = document.createElement('li');
+        const id = document.createElement('code');
+        item.className = result.status;
+        id.textContent = result.id;
+        item.append(id, document.createTextNode(`: ${result.status}. ${result.evidence}`));
+        return item;
+      }));
+    }
+
+    function checkFunction(id, owner, name, detail) {
+      const available = typeof owner?.[name] === 'function';
+      addCapability(id, available, detail);
+      return available;
+    }
+
+    addCapability(
+      'canvas-content-drawable',
+      canvas.getAttribute('content') === 'drawable',
+      'Markup con content="drawable".'
+    );
+    addCapability('canvas-drawable-child', card.hasAttribute('drawable'), 'La card ha l’attributo drawable.');
+    addCapability('nested-drawable-child', nestedCard.hasAttribute('drawable'), 'La surface interna ha l’attributo drawable.');
+    const hasRequestPaint = checkFunction('canvas-requestPaint', canvas, 'requestPaint', 'Richiede un evento paint.');
+    checkFunction('canvas-updateElementGeometry', canvas, 'updateElementGeometry', 'API di geometria prevista dal contratto Chrome 155+.');
+    checkFunction('canvas-clearElementGeometry', canvas, 'clearElementGeometry', 'API di cleanup geometria prevista dal contratto Chrome 155+.');
+    checkFunction('canvas-getElementImageDefaultSize', canvas, 'getElementImageDefaultSize', 'API dimensioni snapshot prevista dal contratto Chrome 155+.');
+    const hasDrawElementImage = checkFunction('canvas-2d-drawElementImage', context, 'drawElementImage', 'Disegno HTML nel contesto Canvas 2D.');
+    addCapability('webgpu-navigator-gpu', Boolean(navigator.gpu), 'Rileva navigator.gpu senza richiedere un device.');
+    const hasGpuQueue = typeof GPUQueue !== 'undefined';
+    addCapability('webgpu-GPUQueue-constructor', hasGpuQueue, 'Costruttore GPUQueue disponibile nel realm.');
+    const hasTextureMethod = hasGpuQueue && typeof GPUQueue.prototype.drawElementImageToTexture === 'function';
+    addCapability(
+      'webgpu-drawElementImageToTexture',
+      hasTextureMethod,
+      'Presenza del metodo Chrome 155+; il metodo non viene invocato.'
+    );
+
+    let paintCount = 0;
+    let titleUpdateCount = 0;
+    let titleUpdatePending = false;
+    window.m0LatestPaintChangedElementIds = [];
+    canvas.addEventListener('paint', (event) => {
+      paintCount += 1;
+      window.m0LatestPaintChangedElementIds = [...(event.changedElements ?? [])]
+        .map((element) => element.id || element.tagName.toLowerCase());
+      const changedElementsAvailable = 'changedElements' in event;
+      const previous = capabilityResults.find((result) => result.id === 'paint-event-changedElements');
+      const detail = changedElementsAvailable
+        ? `Evento paint osservato; ${event.changedElements?.length ?? 0} elementi cambiati nell’ultimo evento.`
+        : 'L’evento paint non espone changedElements.';
+      if (previous) {
+        previous.available = changedElementsAvailable;
+        previous.detail = detail;
+      } else {
+        addCapability('paint-event-changedElements', changedElementsAvailable, detail);
+      }
+
+      if (hasDrawElementImage) {
+        context.reset();
+        context.drawElementImage(card, 40, 32);
+        context.drawElementImage(
+          nestedCard,
+          430,
+          32
+        );
+        if (titleUpdatePending) {
+          const scenario = scenarioResults.find((item) => item.id === 'title-refresh');
+          scenario.status = 'pass';
+          scenario.evidence = 'Il nuovo titolo è stato disegnato dopo la mutazione DOM.';
+          titleUpdatePending = false;
+        }
+      }
+      runtimeStatus.textContent = `Evento paint ricevuto (${paintCount}).`;
+      renderReport();
+    });
+
+    action.addEventListener('click', () => {
+      title.textContent = `Titolo aggiornato (${++titleUpdateCount})`;
+      const clickScenario = scenarioResults.find((item) => item.id === 'card-button-click');
+      clickScenario.status = 'pass';
+      clickScenario.evidence = 'Il listener del pulsante ha ricevuto il click.';
+      titleUpdatePending = true;
+      renderReport();
+    });
+
+    window.addEventListener('error', (event) => {
+      const result = scenarioResults.find((scenario) => scenario.id === 'browser-errors');
+      result.status = 'fail';
+      result.evidence = `Errore JavaScript intercettato: ${event.message || 'messaggio non disponibile'}`;
+      renderReport();
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      const result = scenarioResults.find((scenario) => scenario.id === 'browser-errors');
+      result.status = 'fail';
+      result.evidence = `Promise rejection non gestita: ${String(event.reason)}`;
+      renderReport();
+    });
+
+    const missing = capabilityResults.filter((result) => !result.available).map((result) => result.id);
+    runtimeStatus.textContent = missing.length
+      ? `Preflight incompleta. API assenti: ${missing.join(', ')}.`
+      : 'API verificate come presenti. Le interazioni manuali restano da eseguire.';
+    renderReport();
+    if (hasRequestPaint) canvas.requestPaint();
+  </script>
+</body>
+</html>
