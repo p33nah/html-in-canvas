@@ -261,7 +261,12 @@ export function createScene({ canvas, context, device, resources, ratioX, ratioY
   }
 
   function getStats() {
-    return stats;
+    return {
+      ...stats,
+      frame: { ...stats.frame },
+      scene: { ...stats.scene },
+      gpu: { ...stats.gpu }
+    };
   }
 
   function getCamera() {
