@@ -3,7 +3,11 @@ param(
   [int]$Port = 8000,
   [ValidateRange(1024, 65535)]
   [int]$DebuggingPort = 9222,
-  [ValidateSet('tests/wicg-smoke.html', 'tests/gpu-single.html', 'tests/gpu-multiple.html')]
+  [ValidateRange(1, 4)]
+  [int]$ScaleFactor = 1,
+  [ValidatePattern('^[A-Za-z0-9_-]+$')]
+  [string]$ProfileSuffix = '',
+  [ValidateSet('tests/wicg-smoke.html', 'tests/gpu-single.html', 'tests/gpu-multiple.html', 'tests/gpu-infinite-canvas.html')]
   [string]$Page = 'tests/wicg-smoke.html'
 )
 
@@ -12,6 +16,9 @@ $localAppData = [Environment]::GetFolderPath('LocalApplicationData')
 $chromeVersion = '158.0.8119.0'
 $chrome = Join-Path $localAppData "html-in-canvas-env\chrome-for-testing\$chromeVersion\chrome-win64\chrome.exe"
 $profile = Join-Path $localAppData "html-in-canvas-env\profile-canary-$chromeVersion"
+if ($ProfileSuffix) {
+  $profile = "$profile-$ProfileSuffix"
+}
 $pythonLauncher = Get-Command py.exe -ErrorAction SilentlyContinue
 
 if (!(Test-Path $chrome)) {
@@ -60,6 +67,7 @@ try {
     '--incognito',
     '--no-first-run',
     '--enable-blink-features=CanvasDrawElement',
+    "--force-device-scale-factor=$ScaleFactor",
     '--remote-debugging-address=127.0.0.1',
     "--remote-debugging-port=$DebuggingPort",
     $url
