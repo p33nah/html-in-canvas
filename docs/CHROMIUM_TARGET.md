@@ -135,6 +135,18 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-wicg-smoke
 
 Il contatore risorse della pagina riporta le superfici GPU allocate e distrutte. Non è una misura diretta dell'uso di VRAM.
 
+## M3 — Infinite canvas
+
+La pagina `tests/gpu-infinite-canvas.html` aggiunge pan sullo sfondo, zoom con la rotella e trascinamento delle card da una maniglia dedicata. `src/scene.js` possiede camera e coordinate dei nodi. Il rendering usa pixel di backing; `updateElementGeometry()` riceve la matrice in coordinate CSS.
+
+Per avviare una sessione separata di Chrome for Testing a scala dispositivo 2, usa una porta e un profilo non occupati:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-wicg-smoke.ps1 -Page tests/gpu-infinite-canvas.html -ScaleFactor 2 -ProfileSuffix m3 -Port 8001 -DebuggingPort 9223
+```
+
+L'utente ha confermato la verifica manuale del gate M3. Il tentativo automatico preliminare ha osservato il compositore e le operazioni di pan e zoom, ma il target Chrome era nascosto e il primo campionamento avveniva prima che ResizeObserver impostasse le dimensioni di backing. Dopo il resize simulato, il rapporto era 1.25, non 2; quel report automatico resta inconclusivo ed è conservato in `.audit/m3-browser-results.json`. Lo screenshot è in `.audit/m3-browser.png`.
+
 ## Riferimenti
 
 - [Explainer WICG HTML-in-Canvas](https://github.com/WICG/html-in-canvas) per gli attributi, l'evento `paint` e le API Canvas.
