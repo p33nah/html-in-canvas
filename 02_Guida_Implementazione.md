@@ -628,7 +628,7 @@ La cifra **esclude** mipmaps, copie temporanee, alignment e overhead del browser
 
 ### 12.2 Culling e politiche progressive
 
-1. **Subito:** non comporre i nodi fuori dalla viewport; continuare a gestire correttamente gli elementi DOM e la loro accessibilità.
+1. **Subito:** non comporre né caricare snapshot dei nodi fuori dalla viewport; continuare a gestire correttamente gli elementi DOM e la loro accessibilità. Conservare e aggiornare la geometria DOM di tutte le surface registrate, anche quando sono fuori schermo.
 2. **Dopo benchmark:** eviction di texture di nodi lontani e poco usati; la scena conserva il riferimento DOM.
 3. **Dopo misure:** texture pooling per dimensioni compatibili e caching di snapshot.
 4. **Solo se necessario:** atlas, batching, level of detail, risoluzione adattiva con isteresi.
@@ -659,16 +659,18 @@ La qualità del campionamento, gli zoom estremi e la risoluzione di cattura disp
 
 | Metrica | Definizione operativa |
 |---|---|
-| `frame.cpuMs` | Durata JS dedicata a preparazione/upload/submit |
-| `frame.uploadCount` | Numero chiamate WICG per frame |
-| `frame.drawCount` | Numero draw calls |
-| `scene.visible` | Surface effettivamente composte |
-| `scene.total` | Surface logiche totali |
-| `gpu.estimatedBytes` | Stima della memoria texture posseduta dal runtime |
+| `frame.cpuMs` | Tempo sincrono dall'ingresso in `render()` al ritorno di `queue.submit()`; non misura esecuzione GPU né presentazione |
+| `frame.uploadCount` | Chiamate WICG `drawElementImageToTexture` emesse dal render |
+| `frame.drawCount` | Chiamate `pass.draw(6)` emesse dal render |
+| `scene.visible` | Surface allocate con intersezione ad area positiva con la viewport in pixel backing |
+| `scene.total` | Nodi registrati nella scena, inclusi quelli senza snapshot |
+| `gpu.estimatedBytes` | Stima RGBA8 pari alla somma di `surface.width * surface.height * 4` per tutte le texture allocate, incluse quelle fuori schermo |
 | `input.latencyMs` | Latenza percepita/strumentata nei test di input |
 | `gpu.deviceLost` | Conteggio dei device loss |
 
-Distinguere metriche di tempo CPU da reali misure GPU: `performance.now()` intorno a `queue.submit` **non misura** il tempo eseguito sulla GPU. L'uso di GPU timestamp queries va verificato come feature separata.
+La stima RGBA8 esclude mipmap, copie temporanee, alignment, overhead del browser/GPU e memoria del canvas. Il contatore `frame.cpuMs` si ferma subito dopo il ritorno sincrono di `queue.submit()` e non comprende l'esecuzione GPU né la presentazione. L'uso di GPU timestamp queries va verificato come feature separata.
+
+La scena conserva l'ordine autorevole in una `Map<Element, SceneNode>`. `geometryDirty` rappresenta cambi di posizione, camera o z-order; `surface.contentDirty` rappresenta solo contenuto da acquisire nuovamente. Ogni render proietta le surface allocate, aggiorna la geometria DOM se sporca o non ancora registrata, quindi carica e disegna soltanto le surface con intersezione positiva. Le intersezioni parziali restano visibili e vengono ritagliate dalla viewport GPU. Un upload dirty fuori schermo resta in sospeso fino a quando la surface torna visibile. Dopo `raise()`, la geometria viene riapplicata in ordine scena completo per riallineare hit testing e composizione.
 
 ## 13. Testing: matrici e benchmark
 

@@ -85,12 +85,19 @@
     let initialSnapshotsSynced = false;
 
     function updateStatus() {
-      const counts = scene?.getStats() ?? { nodeCount: 0, allocatedSurfaceCount: 0, destroyedSurfaceCount: 0 };
+      const stats = scene?.getStats() ?? {
+        frame: { cpuMs: 0, uploadCount: 0, drawCount: 0 },
+        scene: { visible: 0, total: 0 },
+        gpu: { estimatedBytes: 0 },
+        nodeCount: 0,
+        allocatedSurfaceCount: 0,
+        snapshotUploadCount: 0
+      };
       let phase = 'pronto';
       if (!state.ready) phase = 'in inizializzazione';
-      else if (counts.allocatedSurfaceCount < counts.nodeCount) phase = 'in attesa degli snapshot';
+      else if (stats.allocatedSurfaceCount < stats.nodeCount) phase = 'in attesa degli snapshot';
       const camera = scene?.getCamera() ?? { x: 0, y: 0, zoom: 1 };
-      status.textContent = `M3 ${phase} · card ${counts.nodeCount} · zoom ${camera.zoom.toFixed(2)}× · pan ${Math.round(camera.x)},${Math.round(camera.y)} · upload HTML ${counts.snapshotUploadCount ?? 0} · render ${state.renderCount}.`;
+      status.textContent = `M3 ${phase} · card ${stats.scene.visible}/${stats.scene.total} visibili · zoom ${camera.zoom.toFixed(2)}× · pan ${Math.round(camera.x)},${Math.round(camera.y)} · texture stimate ${stats.gpu.estimatedBytes} B · CPU ${stats.frame.cpuMs.toFixed(2)} ms · frame ${stats.frame.uploadCount} upload, ${stats.frame.drawCount} draw · upload totali ${stats.snapshotUploadCount} · render ${state.renderCount}.`;
     }
 
     function fail(error) {

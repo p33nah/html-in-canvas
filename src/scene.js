@@ -5,8 +5,18 @@ export function createScene({ canvas, context, device, resources, ratioX, ratioY
   const nodes = new Map();
   let disposedSurfaceCount = 0;
   let snapshotUploadCount = 0;
+  let stats = {
+    frame: { cpuMs: 0, uploadCount: 0, drawCount: 0 },
+    scene: { visible: 0, total: 0 },
+    gpu: { estimatedBytes: 0 },
+    nodeCount: 0,
+    allocatedSurfaceCount: 0,
+    destroyedSurfaceCount: 0,
+    snapshotUploadCount: 0
+  };
   let currentRatioX = ratioX;
   let currentRatioY = ratioY;
+  let geometryReplayRequired = false;
   const camera = { x: 0, y: 0, zoom: 1 };
   const minZoom = 0.25;
   const maxZoom = 4;
@@ -53,9 +63,15 @@ export function createScene({ canvas, context, device, resources, ratioX, ratioY
     return [...nodes.values()];
   }
 
+  function markGeometryDirty() {
+    for (const node of nodes.values()) {
+      if (node.surface) node.geometryDirty = true;
+    }
+  }
+
   function add(element, { x, y }) {
     if (nodes.has(element)) return false;
-    nodes.set(element, { element, x, y, surface: null, geometryRegistered: false });
+    nodes.set(element, { element, x, y, surface: null, geometryRegistered: false, geometryDirty: true });
     return true;
   }
 
@@ -67,6 +83,7 @@ export function createScene({ canvas, context, device, resources, ratioX, ratioY
       const size = canvas.getElementImageDefaultSize(element);
       if (!node.surface) {
         node.surface = makeSurface(node);
+        node.geometryDirty = true;
       } else if (size.width !== node.surface.sourceSize.width || size.height !== node.surface.sourceSize.height) {
         node.surface = resizeSurface(
           device,
@@ -78,6 +95,7 @@ export function createScene({ canvas, context, device, resources, ratioX, ratioY
           currentRatioY
         );
         disposedSurfaceCount += 1;
+        node.geometryDirty = true;
       } else {
         node.surface.contentDirty = true;
       }
@@ -102,21 +120,39 @@ export function createScene({ canvas, context, device, resources, ratioX, ratioY
           currentRatioY
         );
         disposedSurfaceCount += 1;
+        node.geometryDirty = true;
       }
     }
     return true;
   }
 
   function render() {
-    const renderNodes = orderedNodes().filter((node) => node.surface);
-    const projectedNodes = renderNodes.map((node) => ({ node, projection: projectNode(node) }));
-    const needsHitTestStack = projectedNodes.some(({ node }) => !node.geometryRegistered);
+    const startedAt = performance.now();
+    const projectedNodes = orderedNodes()
+      .filter((node) => node.surface)
+      .map((node) => ({ node, projection: projectNode(node) }));
+    const visibleNodes = projectedNodes.filter(({ projection }) => {
+      const { x, y, width, height } = projection.backingRect;
+      return x < canvas.width && y < canvas.height && x + width > 0 && y + height > 0;
+    });
+    const replayGeometry = geometryReplayRequired || projectedNodes.some(({ node }) => !node.geometryRegistered);
+    let uploadCount = 0;
+    let drawCount = 0;
+
     for (const { node, projection } of projectedNodes) {
+      if (replayGeometry || node.geometryDirty) {
+        updateGeometry(node, !replayGeometry, projection);
+        node.geometryDirty = false;
+      }
+    }
+    geometryReplayRequired = false;
+
+    for (const { node } of visibleNodes) {
       if (node.surface.contentDirty) {
         uploadHtmlSurface(device, node.surface);
         snapshotUploadCount += 1;
+        uploadCount += 1;
       }
-      updateGeometry(node, !needsHitTestStack, projection);
     }
 
     const encoder = device.createCommandEncoder();
@@ -129,7 +165,7 @@ export function createScene({ canvas, context, device, resources, ratioX, ratioY
       }]
     });
     pass.setPipeline(resources.pipeline);
-    for (const { node, projection } of projectedNodes) {
+    for (const { node, projection } of visibleNodes) {
       const { surface } = node;
       const uniforms = new Float32Array([
         projection.backingRect.x,
@@ -141,9 +177,28 @@ export function createScene({ canvas, context, device, resources, ratioX, ratioY
       device.queue.writeBuffer(surface.uniformBuffer, 0, uniforms);
       pass.setBindGroup(0, surface.bindGroup);
       pass.draw(6);
+      drawCount += 1;
     }
     pass.end();
     device.queue.submit([encoder.finish()]);
+    const cpuMs = performance.now() - startedAt;
+
+    let allocatedSurfaceCount = 0;
+    let estimatedBytes = 0;
+    for (const node of nodes.values()) {
+      if (!node.surface) continue;
+      allocatedSurfaceCount += 1;
+      estimatedBytes += node.surface.width * node.surface.height * 4;
+    }
+    stats = {
+      frame: { cpuMs, uploadCount, drawCount },
+      scene: { visible: visibleNodes.length, total: nodes.size },
+      gpu: { estimatedBytes },
+      nodeCount: nodes.size,
+      allocatedSurfaceCount,
+      destroyedSurfaceCount: disposedSurfaceCount,
+      snapshotUploadCount
+    };
   }
 
   function raise(element) {
@@ -151,11 +206,7 @@ export function createScene({ canvas, context, device, resources, ratioX, ratioY
     if (!node || [...nodes.keys()].at(-1) === element) return false;
     nodes.delete(element);
     nodes.set(element, node);
-    if (node.surface) {
-      for (const orderedNode of orderedNodes()) {
-        if (orderedNode.surface) updateGeometry(orderedNode);
-      }
-    }
+    if (node.surface) geometryReplayRequired = true;
     return true;
   }
 
@@ -164,6 +215,7 @@ export function createScene({ canvas, context, device, resources, ratioX, ratioY
     assertFiniteNumber(dy, 'dy');
     camera.x += dx;
     camera.y += dy;
+    markGeometryDirty();
     return true;
   }
 
@@ -181,6 +233,7 @@ export function createScene({ canvas, context, device, resources, ratioX, ratioY
     camera.x = point.x - worldX * nextZoom;
     camera.y = point.y - worldY * nextZoom;
     camera.zoom = nextZoom;
+    markGeometryDirty();
     return true;
   }
 
@@ -191,6 +244,7 @@ export function createScene({ canvas, context, device, resources, ratioX, ratioY
     if (!node) return false;
     node.x += dx / camera.zoom;
     node.y += dy / camera.zoom;
+    node.geometryDirty = true;
     return true;
   }
 
@@ -207,16 +261,7 @@ export function createScene({ canvas, context, device, resources, ratioX, ratioY
   }
 
   function getStats() {
-    let allocatedSurfaceCount = 0;
-    for (const node of nodes.values()) {
-      if (node.surface) allocatedSurfaceCount += 1;
-    }
-    return {
-      nodeCount: nodes.size,
-      allocatedSurfaceCount,
-      destroyedSurfaceCount: disposedSurfaceCount,
-      snapshotUploadCount
-    };
+    return stats;
   }
 
   function getCamera() {
