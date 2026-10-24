@@ -147,6 +147,34 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-wicg-smoke
 
 L'utente ha confermato la verifica manuale del gate M3. Il tentativo automatico preliminare ha osservato il compositore e le operazioni di pan e zoom, ma il target Chrome era nascosto e il primo campionamento avveniva prima che ResizeObserver impostasse le dimensioni di backing. Dopo il resize simulato, il rapporto era 1.25, non 2; quel report automatico resta inconclusivo ed è conservato in `.audit/m3-browser-results.json`. Lo screenshot è in `.audit/m3-browser.png`.
 
+## M4 — viewport culling e metriche
+
+La scena ora salta gli upload HTML e i draw delle surface fuori dalla viewport. Mantiene la geometria DOM aggiornata per tutte le surface allocate, così il browser conserva hit testing e accessibilità. Le surface parzialmente visibili restano composte. Un upload dirty fuori schermo resta in sospeso fino al rientro nella viewport.
+
+La pagina M3 mostra le metriche M4 dopo ogni render:
+
+- surface visibili e nodi registrati;
+- byte stimati per le texture RGBA8 allocate;
+- tempo CPU fino al ritorno di `queue.submit()`;
+- upload HTML e draw call del frame corrente;
+- upload HTML cumulativi.
+
+La stima dei byte include anche le texture fuori schermo. Non misura l'uso effettivo di VRAM. Il tempo CPU non misura l'esecuzione GPU o la presentazione del frame.
+
+La verifica runtime M4 e il benchmark non sono ancora stati eseguiti. Per il controllo manuale, avvia la stessa pagina M3:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-wicg-smoke.ps1 -Page tests/gpu-infinite-canvas.html -ProfileSuffix m4 -Port 8002 -DebuggingPort 9224
+```
+
+1. Conferma che le dieci card visibili riportino `10/10` e dieci draw.
+2. Trascina lo sfondo finché tutte le card sono fuori dalla viewport. Conferma `0/10` e zero draw, mentre i byte stimati restano invariati.
+3. Cambia il contenuto di una card fuori schermo. Conferma che quel frame non carichi snapshot.
+4. Riporta la card nella viewport. Conferma che il frame la carichi una volta e mostri il contenuto aggiornato.
+5. Verifica che i controlli di una card visibile mantengano focus e hit testing dopo pan, zoom e `raise()`.
+
+Il benchmark con 1, 10, 100, 500 e 1.000 surface, il budget di memoria e la verifica di input e device loss restano aperti. Questi risultati sono necessari per chiudere M4.
+
 ## Riferimenti
 
 - [Explainer WICG HTML-in-Canvas](https://github.com/WICG/html-in-canvas) per gli attributi, l'evento `paint` e le API Canvas.
