@@ -1,4 +1,4 @@
-# Target Chromium M0–M2
+# Target Chromium M0–M4
 
 ## Stato
 
@@ -161,19 +161,51 @@ La pagina M3 mostra le metriche M4 dopo ogni render:
 
 La stima dei byte include anche le texture fuori schermo. Non misura l'uso effettivo di VRAM. Il tempo CPU non misura l'esecuzione GPU o la presentazione del frame.
 
-La verifica runtime M4 e il benchmark non sono ancora stati eseguiti. Per il controllo manuale, avvia la stessa pagina M3:
+### Eseguire la verifica M4
+
+Avvia la pagina M3 con il Chromium fissato e il profilo M4:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-wicg-smoke.ps1 -Page tests/gpu-infinite-canvas.html -ProfileSuffix m4 -Port 8002 -DebuggingPort 9224
 ```
 
-1. Conferma che le dieci card visibili riportino `10/10` e dieci draw.
-2. Trascina lo sfondo finché tutte le card sono fuori dalla viewport. Conferma `0/10` e zero draw, mentre i byte stimati restano invariati.
-3. Cambia il contenuto di una card fuori schermo. Conferma che quel frame non carichi snapshot.
-4. Riporta la card nella viewport. Conferma che il frame la carichi una volta e mostri il contenuto aggiornato.
-5. Verifica che i controlli di una card visibile mantengano focus e hit testing dopo pan, zoom e `raise()`.
+In un secondo terminale esegui il controllo CDP:
 
-Il benchmark con 1, 10, 100, 500 e 1.000 surface, il budget di memoria e la verifica di input e device loss restano aperti. Questi risultati sono necessari per chiudere M4.
+```powershell
+$env:CDP_PORT = '9224'
+$env:SERVER_PORT = '8002'
+$env:PROFILE_SUFFIX = 'm4'
+$env:LOGICAL_PROCESSORS = [string][Environment]::ProcessorCount
+$env:PROCESSOR_LOAD_PERCENT = [string](Get-CimInstance Win32_Processor).LoadPercentage
+node .\tests\m4-browser-check.mjs --induce-gpu-loss
+```
+
+Il runner riporta gli errori, i contatori e i cinque campioni CPU per cardinalità. L'opzione `--induce-gpu-loss` termina il processo GPU del solo profilo M4, verifica l'errore della pagina e poi chiude il browser di test. Il server locale termina con il browser. Il runner scrive i risultati in `.audit/m4-browser-results.json` e lo screenshot iniziale in `.audit/m4-browser.png`.
+
+### Risultati M4
+
+Verificato il 25 ottobre 2026 su Chrome for Testing `158.0.8119.0`, Intel Core i5-7300U con 4 processori logici, viewport `866×700`, DPR 1. Il carico CPU host riportato all'avvio era 39%.
+
+| Verifica | Risultato |
+|---|---|
+| Render iniziale | 10/10 superfici visibili, dieci draw e nessun errore runtime. |
+| Culling | 0/10 visibili e zero draw; la stima resta `3.014.880 B`. |
+| Mutazione fuori schermo | Zero upload nel frame fuori viewport; il rientro carica uno snapshot. |
+| Input dopo pan, zoom e `raise()` | `#front-input` riceve focus e inserisce il testo atteso. |
+| Perdita del device GPU | Il processo GPU di test è stato terminato; la pagina entra nello stato di errore WebGPU e Chromium avvia un processo GPU sostitutivo. |
+| Errori pagina prima della perdita simulata | Nessuno. |
+
+Ogni riga del benchmark usa un frame di riscaldamento e cinque render statici. Tutte le card sono sovrapposte per mantenere visibili e disegnare tutte le superfici. I tempi misurano la CPU fino al ritorno di `queue.submit()`. Non misurano l'esecuzione GPU o la presentazione del frame. È una singola run senza un baseline pre-M4, quindi non supporta una dichiarazione di speedup.
+
+| Superfici | CPU statica p50 (min–max) | Geometria CPU | Una mutazione CPU | Byte texture stimati |
+|---:|---:|---:|---:|---:|
+| 1 | 0,40 ms (0,20–1,20) | 0,30 ms | 0,60 ms | 277.200 B |
+| 10 | 0,20 ms (0,10–1,00) | 0,40 ms | 1,70 ms | 2.772.000 B |
+| 100 | 0,60 ms (0,50–1,20) | 1,20 ms | 1,10 ms | 27.720.000 B |
+| 500 | 2,20 ms (1,70–2,70) | 6,30 ms | 2,60 ms | 138.600.000 B |
+| 1.000 | 4,00 ms (3,50–4,40) | 13,60 ms | 9,30 ms | 277.200.000 B |
+
+Il benchmark usa un limite di riferimento di `300.000.000 B` per 1.000 card standard. La stima misurata è `277.200.000 B`, pari al 92,4% del limite. Il limite riguarda solo le texture RGBA8 stimate. Non rappresenta VRAM misurata e non limita le allocazioni dell'applicazione.
 
 ## Riferimenti
 
